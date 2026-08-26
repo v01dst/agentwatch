@@ -25,7 +25,7 @@ export class GenericAdapter implements AgentAdapter {
     return {
       command: executableOnPlatform(command),
       args,
-      spawnOptions: { stdio: [process.stdin, process.stdout, process.stderr], shell: false },
+      spawnOptions: { shell: false },
     };
   }
 }
@@ -46,7 +46,8 @@ export function resolveAdapter(argv: string[]): { adapter: AgentAdapter; argv: s
     name = value;
     nextArgv.splice(explicitIndex, 2);
   }
-  const adapter = knownAdapters.get(nextArgv[0] ?? "") ?? new GenericAdapter(name);
+  const adapterName = nextArgv[0] ?? "";
+  const adapter = knownAdapters.get(adapterName) ?? new GenericAdapter(name);
   return { adapter, argv: nextArgv };
 }
 

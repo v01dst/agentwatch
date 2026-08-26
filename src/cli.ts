@@ -101,6 +101,8 @@ COMMON RUN OPTIONS
   --no-process-tree             Disable best-effort descendant-process snapshots.
   --no-network                  Disable metadata-only network snapshots.
   --resource-interval-ms <ms>   Sampling interval; 0 disables resource sampling.
+  --overlay                     Optional one-line status strip. Leave off for full-screen CLIs such as Codex.
+                                Overlay and --json switch run to captured output mode.
 
 DATA
   Stored locally in ./.agentwatch by default.
@@ -126,10 +128,11 @@ async function main(argv: string[]): Promise<number> {
       ...(typeof args.flags.get("model") === "string" ? { model: String(args.flags.get("model")) } : {}),
       processTree: !args.flags.has("no-process-tree"),
       network: !args.flags.has("no-network"),
+      capture: args.flags.has("json") || args.flags.has("overlay"),
       ...(Number(args.flags.get("resource-interval-ms")) > 0 ? { resourceIntervalMs: Number(args.flags.get("resource-interval-ms")) } : {}),
     };
     const childArgv = rest.slice(rest.indexOf("--") + 1).filter(Boolean);
-    const overlayEnabled = !args.flags.has("no-overlay") && process.stdout.isTTY && !args.flags.has("json");
+    const overlayEnabled = args.flags.has("overlay") && process.stdout.isTTY && !args.flags.has("json");
     const overlay = overlayEnabled ? createOverlay() : null;
     let completed: RunResult | undefined;
     try {

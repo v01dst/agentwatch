@@ -60,12 +60,15 @@ Observe an arbitrary agent exactly as you normally run it:
 
 ```bash
 agentwatch run -- codex "fix the failing tests"
+agentwatch run -- codex
 agentwatch run --adapter codex -- claude "refactor auth.ts"
 agentwatch run -- opencode
 agentwatch run --json -- node ./your-agent.js
 ```
 
-Use `Ctrl+C` normally. AgentWatch forwards signals and records lifecycle information without taking control away from you.
+For full-screen interactive CLIs such as Codex, run `agentwatch run -- codex`. AgentWatch preserves the real terminal and
+lets you keep working side by side for the entire session. Use `Ctrl+C` normally. Add `--overlay` only if you want a one-line
+status strip; overlay mode captures output and is better suited to line-oriented agents.
 
 Inspect what happened:
 

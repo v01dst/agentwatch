@@ -16,6 +16,7 @@ export interface RunOptions {
   processTree?: boolean;
   network?: boolean;
   resourceIntervalMs?: number;
+  capture?: boolean;
   onEvent?: (event: AgentWatchEvent) => void | Promise<void>;
 }
 
@@ -91,14 +92,15 @@ export class AgentRunner {
       ...launch.spawnOptions,
       cwd,
       env: { ...process.env, ...(options.model ? { AGENTWATCH_MODEL: options.model } : {}) },
-      stdio: ["pipe", "pipe", "pipe"],
+      ...(options.capture || Array.isArray(launch.spawnOptions?.stdio) ? { stdio: ["pipe", "pipe", "pipe"] as const } : { stdio: "inherit" as const }),
     });
-    if (process.stdin.isTTY) process.stdin.setRawMode(true);
-    process.stdin.pipe(child.stdin, { end: false });
-    process.stdin.resume();
-
-    const forwarder = createForwarder(child.stdout!, "output.stdout", appendOutput.bind(null, "stdout"), emit);
-    const errorForwarder = createForwarder(child.stderr!, "output.stderr", appendOutput.bind(null, "stderr"), emit);
+    const captured = options.capture === true || Array.isArray(launch.spawnOptions?.stdio);
+    const forwarder = captured
+      ? createForwarder(child.stdout!, "output.stdout", appendOutput.bind(null, "stdout"), emit)
+      : Promise.resolve();
+    const errorForwarder = captured
+      ? createForwarder(child.stderr!, "output.stderr", appendOutput.bind(null, "stderr"), emit)
+      : Promise.resolve();
     const interval = options.resourceIntervalMs ?? 1000;
     const resourceTimer = interval > 0 ? setInterval(() => {
       void emit("resource.usage", {
@@ -139,9 +141,6 @@ export class AgentRunner {
     if (resourceTimer) clearInterval(resourceTimer);
     for (const observer of observers) observer.stop();
     for (const [signal, handler] of signalHandlers) process.off(signal, handler);
-    process.stdin.unpipe(child.stdin);
-    if (process.stdin.isTTY && process.stdin.readable) process.stdin.setRawMode(false);
-    process.stdin.pause();
     await Promise.allSettled([forwarder, errorForwarder]);
 
     const after = await snapshotGit(cwd);
@@ -166,7 +165,7 @@ export class AgentRunner {
       id, exitCode: result.exitCode, signal: result.signal, durationMs,
       events, stdout: redactText(stdoutBuffer), stderr: redactText(stderrBuffer),
       status,
-      ...(Object.keys(usage).length > 0 ? { tokenUsage: usage } : {}),
+      ...(Object.keys(usage).length > 0 && captured ? { tokenUsage: usage } : {}),
     };
   }
 
