@@ -29,9 +29,16 @@ Core kinds cover session/process lifecycle, output streams, file/git/package/net
 security findings, benchmark results, and adapter extensions. The versioned schema starts at `1`.
 
 ## Storage
-NDJSON provides append-friendly raw sessions. Small atomic JSON catalogs provide indexes and avoid a native
-SQLite dependency while retaining a clear migration boundary (`index/schema.json`). Future engines can replace
-the store implementation without changing the public CLI or event contract.
+Schema v2 writes each normalized event immediately to an append-only NDJSON file. Atomic per-session manifests
+plus an aggregate manifest catalog track completion state, enabling startup recovery of interrupted sessions without
+inventing missing events. Small atomic JSON catalogs provide indexes and avoid a native SQLite dependency while retaining
+a clear migration boundary (`index/schema.json`).
+
+## Platform observers
+
+Process-tree observation is best-effort and read-only: `/proc` on Linux, `ps` on macOS, and Windows CIM through PowerShell
+where available. Network observation records connection metadata only using detected local tools (`ss`, `lsof`, or platform
+equivalents); payloads are never captured. Missing OS tooling disables the corresponding observer without affecting agent execution.
 
 ## Platform design
 Spawn uses explicit shell-free execution by default, platform-aware executable resolution, forwarded signals,

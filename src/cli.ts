@@ -7,7 +7,9 @@ import { LocalStore } from "./storage/store.js";
 import { analyzeEvents, scanProject } from "./analysis/security.js";
 import { scoreCandidates } from "./benchmark/engine.js";
 import type { BenchmarkRunResult } from "./benchmark/types.js";
+import type { JsonValue } from "./types.js";
 import { comparisonReport } from "./report/render.js";
+import { buildLeaderboard, renderDashboard } from "./observability/dashboard.js";
 
 interface ParsedArgs {
   flags: Map<string, string | boolean>;
@@ -55,6 +57,8 @@ Usage:
   agentwatch history
   agentwatch export <file-or-session-id>
   agentwatch import <export-file>
+  agentwatch dashboard
+  agentwatch leaderboard [--task id] [--limit n]
 
 AgentWatch observes only. It never approves, blocks, pauses, or edits an agent.
 All data remains in ./.agentwatch unless AGENTWATCH_DATA_DIR is configured.`;
@@ -74,9 +78,12 @@ async function main(argv: string[]): Promise<number> {
     const runnerOptions = {
       cwd: process.cwd(),
       ...(typeof args.flags.get("model") === "string" ? { model: String(args.flags.get("model")) } : {}),
+      processTree: !args.flags.has("no-process-tree"),
+      network: !args.flags.has("no-network"),
+      ...(Number(args.flags.get("resource-interval-ms")) > 0 ? { resourceIntervalMs: Number(args.flags.get("resource-interval-ms")) } : {}),
     };
     const childArgv = rest.slice(rest.indexOf("--") + 1).filter(Boolean);
-    const run = await new AgentRunner().run(childArgv, runnerOptions);
+    const run = await (await AgentRunner.open({ cwd: process.cwd() })).run(childArgv, runnerOptions);
     if (args.flags.has("json")) console.log(JSON.stringify(run, null, 2));
     return 0;
   }
@@ -87,8 +94,11 @@ async function main(argv: string[]): Promise<number> {
     const raw = await fs.readFile(store.sessionPath(id), "utf8");
     const events = raw.trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
     const findings = [...analyzeEvents(events), ...(await scanProject(process.cwd()))];
-    const payload = { id, findings, eventCount: events.length, events };
-    if (command !== "report" || args.flags.has("json")) console.log(JSON.stringify(payload, null, 2));
+    const manifest = await store.readManifest(id);
+    const payload = { id, manifest, findings, eventCount: events.length, events };
+    if (command === "session" && args.flags.has("json")) console.log(JSON.stringify(payload, null, 2));
+    else if (command === "inspect") console.log(JSON.stringify(payload, null, 2));
+    else if (command === "report") printRichReport(manifest, events, findings);
     else printSession(events, findings);
     return 0;
   }
@@ -98,15 +108,26 @@ async function main(argv: string[]): Promise<number> {
     const agents = Array.isArray(args.flags.get("agent")) ? [] : collectAgents(args.flags.get("agent"));
     const results: BenchmarkRunResult[] = [];
     for (const [agentId, model] of agents) {
-      const run = await new AgentRunner().run([agentId], {
+      const run = await (await AgentRunner.open({ cwd: taskDir })).run([agentId], {
         cwd: taskDir,
         ...(model === undefined ? {} : { model }),
+        processTree: !args.flags.has("no-process-tree"),
+        network: !args.flags.has("no-network"),
+        ...(Number(args.flags.get("resource-interval-ms")) > 0 ? { resourceIntervalMs: Number(args.flags.get("resource-interval-ms")) } : {}),
       });
       results.push(candidateFromRun(run, agentId, model));
     }
     const scored = scoreCandidates(results);
     const resultPath = path.join(taskDir, ".agentwatch-result.json");
-    await fs.writeFile(resultPath, JSON.stringify({ task: path.basename(taskDir), candidates: scored }, null, 2), { mode: 0o600 });
+    const result = {
+      schemaVersion: 2,
+      id: `${path.basename(taskDir)}-${Date.now()}`,
+      task: path.basename(taskDir),
+      createdAt: new Date().toISOString(),
+      candidates: scored,
+    };
+    await fs.writeFile(resultPath, JSON.stringify(result, null, 2), { mode: 0o600 });
+    await store.append("benchmarks", JSON.parse(JSON.stringify(result)) as Record<string, JsonValue>);
     if (scored.length >= 2) {
       console.log(comparisonReport(scored[0]!, scored[1]!, path.basename(taskDir), [
         results[0]!.agentId, results[1]!.agentId,
@@ -122,7 +143,28 @@ async function main(argv: string[]): Promise<number> {
     return 0;
   }
   if (command === "history") {
-    console.log(JSON.stringify(await store.list("sessions"), null, 2));
+    const args = parseArgs(rest);
+    const sessions = await store.listManifests();
+    if (args.flags.has("json")) console.log(JSON.stringify(sessions, null, 2));
+    else for (const session of sessions)
+      console.log(`${session.status.padEnd(10)} ${session.id} ${redactCliText(session.command.join(" "))}`);
+    return 0;
+  }
+  if (command === "dashboard") {
+    console.log(await renderDashboard(store));
+    return 0;
+  }
+  if (command === "leaderboard") {
+    const args = parseArgs(rest);
+    const entries = await buildLeaderboard(store, typeof args.flags.get("task") === "string" ? String(args.flags.get("task")) : undefined);
+    const limit = Number(args.flags.get("limit") ?? (entries.length || 10));
+    const visible = entries.slice(0, Number.isFinite(limit) && limit > 0 ? limit : 10);
+    if (args.flags.has("json")) console.log(JSON.stringify(visible, null, 2));
+    else {
+      console.log("Local benchmark leaderboard (task-specific; not universal rankings)\n");
+      for (const [index, entry] of visible.entries())
+        console.log(`${String(index + 1).padStart(2)}. ${entry.agent}${entry.model ? `:${entry.model}` : ""} — score ${entry.averageScore}, wins ${entry.wins}/${entry.runs}, pass rate ${Math.round(entry.averageTestPassRate * 100)}%${entry.medianDurationMs == null ? "" : `, median ${entry.medianDurationMs} ms`}`);
+    }
     return 0;
   }
   if (command === "export" || command === "import") {
@@ -164,6 +206,25 @@ function printSession(events: any[], findings: unknown[]): void {
   for (const event of events)
     console.log(`${String(event.sequence).padStart(4)}  ${event.kind}  ${JSON.stringify(event.data)}`);
   console.log(`\nSecurity findings: ${findings.length}`);
+}
+
+function printRichReport(manifest: any, events: any[], findings: unknown[]): void {
+  console.log(`Session ${manifest?.id ?? "unknown"} — ${manifest?.status ?? "unknown"}`);
+  console.log(`Command: ${manifest?.command?.join(" ") ?? "unknown"}`);
+  console.log(`Adapter: ${manifest?.adapter ?? "unknown"} · Duration: ${manifest?.durationMs ?? "?"} ms · Exit: ${manifest?.exitCode ?? "?"}${manifest?.signal ? ` · Signal: ${manifest.signal}` : ""}`);
+  const counts = new Map<string, number>();
+  for (const event of events) counts.set(event.kind, (counts.get(event.kind) ?? 0) + 1);
+  console.log("\nActivity:");
+  for (const [kind, count] of [...counts.entries()].sort()) console.log(`- ${kind}: ${count}`);
+  const resources = events.filter((event) => event.kind === "resource.usage").map((event) => Number(event.data.rssBytes));
+  if (resources.length) console.log(`Resource peak RSS: ${(Math.max(...resources) / 1024 / 1024).toFixed(1)} MB`);
+  console.log("\nSecurity findings:");
+  if (!findings.length) console.log("- none detected");
+  for (const finding of findings as any[]) console.log(`- [${finding.severity}] ${finding.title}${finding.filePath ? ` — ${finding.filePath}` : ""}`);
+}
+
+function redactCliText(value: string): string {
+  return value.replace(/(?:api[_-]?key|token|password|secret)["':=\s]+[^\s'"]+/gi, "$&…[redacted]");
 }
 
 main(process.argv.slice(2)).then((code) => {

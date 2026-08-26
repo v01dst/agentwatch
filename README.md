@@ -140,6 +140,8 @@ Findings are informational only. Evidence is redacted—for example `sk-a…[red
 | `agentwatch report <id>` | Human-readable session report |
 | `agentwatch benchmark <dir>` | Run deterministic candidate comparisons |
 | `agentwatch compare <a.json> <b.json>` | Compare saved benchmark results |
+| `agentwatch dashboard` | Read-only local terminal dashboard for recent sessions, findings, and benchmarks |
+| `agentwatch leaderboard [--task id]` | Aggregate local deterministic benchmark history by agent/model |
 | `agentwatch history` | List locally recorded sessions |
 | `agentwatch export <file>` | Copy a local artifact into exports |
 | `agentwatch import <file>` | Import a benchmark/export artifact |
@@ -160,12 +162,16 @@ Useful global flags:
 | `--adapter <name>` | Adapter selection; unknown adapters use the generic launcher | inferred |
 | `--model <model>` | Exported as `AGENTWATCH_MODEL`; provider-specific flags belong in a wrapper script | unset |
 | `--json` | Emit automation-friendly output | disabled |
+| `--no-process-tree` | Disable best-effort descendant-process observation during a run | enabled where available |
+| `--no-network` | Disable metadata-only network observation during a run | enabled where available |
+| `--resource-interval-ms <ms>` | Set telemetry sampling interval; `0` disables resource sampling | `1000` |
 
 All data remains under `.agentwatch/` by default:
 
 ```text
 .agentwatch/
 ├── index/schema.json        schema migration marker (version 1)
+├── index/session-manifests.json  atomic session status catalog (schema v2)
 ├── index/sessions.json      atomic session catalog
 ├── index/benchmarks.json    atomic benchmark catalog
 ├── sessions/<id>.ndjson     append-only normalized events
@@ -258,10 +264,8 @@ Yes. The generic launcher runs arbitrary executables; adapters improve normaliza
 
 ## Roadmap
 
-- Deeper per-command attribution across process trees.
-- Optional OS-specific network observation adapters.
-- More provider token-usage extractors.
-- Richer local TUI dashboards and saved leaderboard views.
+- More provider token-usage extractors and richer process/network parsers.
+- Saved custom dashboard views and exportable leaderboards.
 - Expanded Windows validation and packaging tests.
 
 ## Community

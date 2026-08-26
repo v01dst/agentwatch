@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import readline from "node:readline";
 import type { AgentWatchEvent } from "../types.js";
+import type { SessionStatus } from "../types.js";
 import { eventId, sessionId } from "../utils/id.js";
 import { resolveAdapter, tokenUsage, type AgentAdapter } from "../adapters/base.js";
 import { LocalStore } from "../storage/store.js";
@@ -12,6 +13,9 @@ export interface RunOptions {
   cwd?: string;
   model?: string;
   dataDirectory?: string;
+  processTree?: boolean;
+  network?: boolean;
+  resourceIntervalMs?: number;
   onEvent?: (event: AgentWatchEvent) => void | Promise<void>;
 }
 
@@ -37,7 +41,7 @@ export class AgentRunner {
   private readonly store: LocalStore;
 
   constructor(store?: LocalStore) {
-    this.store = store ?? resolveConfiguredStore();
+    this.store = store ?? new LocalStore(resolveConfig(process.cwd(), process.env.AGENTWATCH_DATA_DIR));
   }
 
   static async open(options: Pick<RunOptions, "cwd" | "dataDirectory"> = {}): Promise<AgentRunner> {
@@ -58,6 +62,11 @@ export class AgentRunner {
     const startedAt = Date.now();
     let stdoutBuffer = "";
     let stderrBuffer = "";
+    const writer = await this.store.createSessionWriter(id);
+    await this.store.writeManifest({
+      schemaVersion: 2, id, startedAt: new Date().toISOString(), command: argv,
+      cwd, adapter: adapter.name, status: "running", complete: false,
+    });
 
     const emit = async (kind: AgentWatchEvent["kind"], data: Record<string, unknown>, severity?: AgentWatchEvent["severity"]): Promise<void> => {
       const event: AgentWatchEvent = {
@@ -65,7 +74,13 @@ export class AgentRunner {
         ...(severity ? { severity } : {}), data: data as AgentWatchEvent["data"],
       };
       events.push(event);
+      await writer.write(event);
       await options.onEvent?.(event);
+    };
+
+    const appendOutput = async (stream: "stdout" | "stderr", chunk: string): Promise<void> => {
+      if (stream === "stdout") stdoutBuffer = boundedAppend(stdoutBuffer, chunk);
+      else stderrBuffer = boundedAppend(stderrBuffer, chunk);
     };
 
     await emit("session.start", { command: argv, cwd, adapter: adapter.name });
@@ -81,20 +96,28 @@ export class AgentRunner {
     process.stdin.pipe(child.stdin, { end: false });
     process.stdin.resume();
 
-    const forwarder = createForwarder(child.stdout!, "output.stdout", async (chunk) => {
-      stdoutBuffer += chunk;
-    }, emit);
-    const errorForwarder = createForwarder(child.stderr!, "output.stderr", async (chunk) => {
-      stderrBuffer += chunk;
-    }, emit);
-    const resourceTimer = setInterval(() => {
+    const forwarder = createForwarder(child.stdout!, "output.stdout", appendOutput.bind(null, "stdout"), emit);
+    const errorForwarder = createForwarder(child.stderr!, "output.stderr", appendOutput.bind(null, "stderr"), emit);
+    const interval = options.resourceIntervalMs ?? 1000;
+    const resourceTimer = interval > 0 ? setInterval(() => {
       void emit("resource.usage", {
         rssBytes: process.memoryUsage.rss(),
         cpuUserMs: process.cpuUsage().user,
         cpuSystemMs: process.cpuUsage().system,
         childPid: child.pid,
       });
-    }, 1000);
+    }, interval) : null;
+    const observers: Array<{ stop(): void }> = [];
+    if (options.processTree !== false) {
+      const processObserver = new ProcessTreeObserver();
+      processObserver.start(Number(child.pid ?? 0), (snapshot) => { void emit("process.tree", snapshot); }, interval);
+      observers.push(processObserver);
+    }
+    if (options.network !== false) {
+      const networkObserver = new NetworkObserver();
+      networkObserver.start(Number(child.pid ?? 0), (connections) => { void emit("network.observation.detail", { connections }); }, Math.max(interval, 2000));
+      observers.push(networkObserver);
+    }
     const signals: NodeJS.Signals[] = ["SIGINT", "SIGTERM"];
     const signalHandlers = new Map<NodeJS.Signals, () => void>();
     for (const signal of signals) {
@@ -112,7 +135,8 @@ export class AgentRunner {
       });
     });
     const result = await exited;
-    clearInterval(resourceTimer);
+    if (resourceTimer) clearInterval(resourceTimer);
+    for (const observer of observers) observer.stop();
     for (const [signal, handler] of signalHandlers) process.off(signal, handler);
     process.stdin.unpipe(child.stdin);
     if (process.stdin.isTTY && process.stdin.readable) process.stdin.setRawMode(false);
@@ -126,12 +150,17 @@ export class AgentRunner {
     const usage = adapter.extractTokenUsage?.(stdoutBuffer, stderrBuffer) ?? tokenUsage(stdoutBuffer, stderrBuffer);
     if (Object.keys(usage).length > 0) await emit("adapter.custom", { type: "token-usage", ...usage });
     const durationMs = Date.now() - startedAt;
-    const status = result.signal ? "signaled" : result.exitCode === 0 ? "success" : "failed";
+    const status: SessionStatus = result.signal ? "signaled" : result.exitCode === 0 ? "success" : "failed";
     await emit("session.end", {
       exitCode: result.exitCode, signal: result.signal, durationMs, status,
       command: argv, cwd, adapter: adapter.name, tokenUsage: usage,
     });
-    await this.persist(id, events);
+    await this.store.writeManifest({
+      schemaVersion: 2, id, startedAt: new Date(startedAt).toISOString(), endedAt: new Date().toISOString(),
+      exitCode: result.exitCode, signal: result.signal, durationMs, command: argv, cwd,
+      adapter: adapter.name, status, ...(child.pid === undefined ? {} : { pid: child.pid }), eventCount: events.length, complete: true,
+    });
+    await writer.close();
     return {
       id, exitCode: result.exitCode, signal: result.signal, durationMs,
       events, stdout: redactText(stdoutBuffer), stderr: redactText(stderrBuffer),
@@ -139,17 +168,104 @@ export class AgentRunner {
     };
   }
 
-  private async persist(id: string, events: AgentWatchEvent[]): Promise<void> {
-    const filePath = path.join(this.store.sessionPath(id), "..", `${id}.ndjson`);
-    await fs.mkdir(path.dirname(filePath), { recursive: true });
-    await fs.writeFile(filePath, `${events.map((event) => JSON.stringify(event)).join("\n")}\n`, { mode: 0o600 });
-    await this.store.append("sessions", { id, eventCount: events.length });
+}
+
+function boundedAppend(current: string, chunk: string): string {
+  const next = `${current}${chunk}\n`;
+  return next.length > 256 * 1024 ? next.slice(next.length - 256 * 1024) : next;
+}
+
+interface Stoppable {
+  stop(): void;
+}
+
+export class ProcessTreeObserver implements Stoppable {
+  private timer?: NodeJS.Timeout;
+  private readonly seen = new Set<number>();
+
+  start(parentPid: number, callback: (data: Record<string, unknown>) => void, intervalMs = 1000): void {
+    if (!parentPid) return;
+    this.timer = setInterval(() => {
+      void listDescendants(parentPid).then((snapshots) => {
+        for (const snapshot of snapshots)
+          callback({ ...snapshot, ...(this.seen.has(Number(snapshot.pid)) ? { lastSeenAt: new Date().toISOString() } : { firstSeenAt: new Date().toISOString() }) });
+      }).catch(() => undefined);
+    }, intervalMs);
+    this.timer.unref?.();
+  }
+
+  stop(): void {
+    if (this.timer) clearInterval(this.timer);
   }
 }
 
-function resolveConfiguredStore(): LocalStore {
-  const config = resolveConfig(process.cwd(), process.env.AGENTWATCH_DATA_DIR);
-  return new LocalStore(config);
+interface ProcessLine { pid: number; ppid: number; command?: string; cpuPercent?: number; memoryBytes?: number }
+
+async function listDescendants(parentPid: number): Promise<ProcessLine[]> {
+  const all = process.platform === "darwin" ? await psSnapshot() : await procSnapshot();
+  const byParent = new Map<number, ProcessLine[]>();
+  for (const item of all) byParent.set(item.ppid, [...(byParent.get(item.ppid) ?? []), item]);
+  const descendants: ProcessLine[] = [];
+  const visit = (pid: number) => {
+    for (const child of byParent.get(pid) ?? []) {
+      descendants.push(child);
+      visit(child.pid);
+    }
+  };
+  visit(parentPid);
+  return descendants;
+}
+
+async function psSnapshot(): Promise<ProcessLine[]> {
+  const output = await execFileText("ps", ["-axo", "pid=,ppid=,%cpu=,rss=,command="]);
+  return output.trim().split("\n").filter(Boolean).map((line) => {
+    const columns = line.trim().split(/\s+/);
+    return {
+      pid: Number(columns[0]), ppid: Number(columns[1]), cpuPercent: Number(columns[2]),
+      memoryBytes: Number(columns[3]) * 1024, command: redactText(columns.slice(4).join(" ")),
+    };
+  }).filter((item) => Number.isFinite(item.pid) && Number.isFinite(item.ppid));
+}
+
+async function procSnapshot(): Promise<ProcessLine[]> {
+  const base = "/proc";
+  const entries = await fs.readdir(base).catch(() => [] as string[]);
+  const results: Array<ProcessLine | null> = await Promise.all(entries.filter((entry) => /^\d+$/.test(entry)).map(async (entry) => {
+    try {
+      const stat = await fs.readFile(path.join(base, entry, "stat"), "utf8");
+      const fields = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
+      const command = redactText((await fs.readFile(path.join(base, entry, "cmdline"), "utf8")).replaceAll("\0", " ").trim());
+      return { pid: Number(entry), ppid: Number(fields[1]), command, memoryBytes: Number(fields[21]) * 1024 };
+    } catch { return null; }
+  }));
+  return results.filter((item): item is ProcessLine => item !== null && Number.isFinite(item.ppid));
+}
+
+async function execFileText(command: string, args: string[]): Promise<string> {
+  const child = spawn(command, args);
+  let output = "";
+  child.stdout?.on("data", (chunk: Buffer) => { output += String(chunk); });
+  child.stderr?.resume();
+  await new Promise<void>((resolve) => { child.once("close", resolve); child.once("error", resolve); });
+  return output;
+}
+
+export class NetworkObserver implements Stoppable {
+  private timer?: NodeJS.Timeout;
+
+  start(_parentPid: number, callback: (connections: Array<Record<string, unknown>>) => void, intervalMs = 2000): void {
+    this.timer = setInterval(() => {
+      const tool = process.platform === "linux" ? "ss" : process.platform === "darwin" ? "lsof" : null;
+      if (!tool) return;
+      void execFileText(tool, tool === "ss" ? ["-tupn"] : ["-i", "-nP"]).then((output) =>
+        callback(output.trim().split("\n").slice(1).filter(Boolean).map((line) => ({ raw: redactText(line) }))));
+    }, intervalMs);
+    this.timer.unref?.();
+  }
+
+  stop(): void {
+    if (this.timer) clearInterval(this.timer);
+  }
 }
 
 function createForwarder(

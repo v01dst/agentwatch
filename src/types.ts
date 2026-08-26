@@ -1,5 +1,7 @@
 export type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
 
+export type JsonObject = { [key: string]: JsonValue };
+
 export type EventKind =
   | "session.start"
   | "session.end"
@@ -12,11 +14,13 @@ export type EventKind =
   | "file.change"
   | "git.change"
   | "package.install"
+  | "network.observation.detail"
   | "network.observation"
   | "resource.usage"
   | "security.finding"
   | "benchmark.result"
-  | "adapter.custom";
+  | "adapter.custom"
+  | "session.recovered";
 
 export type EventSeverity = "info" | "warning" | "critical";
 
@@ -37,7 +41,9 @@ export interface ProcessSnapshot {
   memoryBytes?: number;
 }
 
-export interface SessionSummary {
+export type SessionStatus = "running" | "incomplete" | "success" | "failed" | "signaled";
+
+export interface SessionManifest {
   id: string;
   startedAt: string;
   endedAt?: string;
@@ -47,7 +53,20 @@ export interface SessionSummary {
   command: string[];
   cwd: string;
   adapter: string;
-  status: "running" | "success" | "failed" | "signaled";
+  status: SessionStatus;
+  pid?: number;
+  eventCount?: number;
+  complete?: boolean;
+}
+
+export interface NetworkConnection {
+  protocol?: string;
+  localAddress?: string;
+  localPort?: number;
+  remoteAddress?: string;
+  remotePort?: number;
+  state?: string;
+  pid?: number;
 }
 
 export interface Finding {
