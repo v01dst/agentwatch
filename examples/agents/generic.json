@@ -1,0 +1,5 @@
+{
+  "name": "generic",
+  "command": ["your-agent", "--flag"],
+  "tokenUsage": "optional adapter extraction hook"
+}

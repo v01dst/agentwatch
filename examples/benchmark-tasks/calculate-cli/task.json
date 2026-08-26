@@ -1,0 +1,8 @@
+{
+  "id": "calculate-cli",
+  "description": "Implement a CLI that adds two integers and exits successfully",
+  "setup": ["npm install"],
+  "evaluation": ["node index.js 2 3"],
+  "expectedOutput": "5",
+  "scoringWeights": { "testPassRate": 50, "build": 25, "duration": 10 }
+}
