@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 220" width="880" height="220">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#07111f"/><stop offset="1" stop-color="#101b2d"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#38bdf8"/><stop offset=".55" stop-color="#22d3ee"/><stop offset="1" stop-color="#a3e635"/>
+    </linearGradient>
+  </defs>
+  <rect width="880" height="220" rx="34" fill="url(#bg)"/>
+  <rect x="2" y="2" width="876" height="216" rx="32" fill="none" stroke="#243449"/>
+  <circle cx="112" cy="110" r="52" fill="#0b1626" stroke="url(#accent)" stroke-width="5"/>
+  <circle cx="112" cy="82" r="9" fill="#a3e635"/>
+  <circle cx="86" cy="126" r="7" fill="#38bdf8"/>
+  <circle cx="138" cy="126" r="5" fill="#f472b6"/>
+  <path d="M60 110h104M112 58v104" stroke="#1d3145" stroke-width="2"/>
+  <path d="M74 136c18-18 30-42 38-62M150 84c-16 20-28 44-36 64" stroke="url(#accent)" stroke-width="4" fill="none" opacity=".75"/>
+  <text x="210" y="105" fill="#f8fafc" font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="72" font-weight="700">AgentWatch</text>
+  <text x="214" y="152" fill="url(#accent)" font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="25" letter-spacing="2">OBSERVE · MEASURE · DO NOT CONTROL</text>
+</svg>

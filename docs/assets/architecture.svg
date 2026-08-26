@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1180 520" width="1180" height="520">
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><path d="M0,0 L10,4 L0,8z" fill="#7dd3fc"/></marker>
+    <linearGradient id="line" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#38bdf8"/><stop offset="1" stop-color="#a3e635"/></linearGradient>
+  </defs>
+  <rect width="1180" height="520" rx="26" fill="#07101d"/>
+  <g font-family="Inter,Segoe UI,sans-serif" fill="#e2e8f0">
+    <rect x="45" y="70" width="250" height="130" rx="20" fill="#0d1a2b" stroke="#274057"/>
+    <text x="170" y="115" text-anchor="middle" font-size="23" font-weight="700">Your terminal</text><text x="170" y="151" text-anchor="middle" font-size="17" fill="#94a3b8">stdin / stdout / Ctrl+C</text><text x="170" y="177" text-anchor="middle" font-size="17" fill="#94a3b8">user remains in control</text>
+    <rect x="365" y="70" width="250" height="130" rx="20" fill="#102334" stroke="#38bdf8"/>
+    <text x="490" y="113" text-anchor="middle" font-size="23" font-weight="700">Agent adapter</text><text x="490" y="149" text-anchor="middle" font-size="17" fill="#94a3b8">Codex · Claude · OpenCode</text><text x="490" y="175" text-anchor="middle" font-size="17" fill="#94a3b8">generic executable API</text>
+    <circle cx="740" cy="135" r="54" fill="#132a37" stroke="url(#line)" stroke-width="5"/>
+    <text x="740" y="129" text-anchor="middle" font-size="19" font-weight="700">Event</text><text x="740" y="153" text-anchor="middle" font-size="19" font-weight="700">bus</text>
+    <rect x="885" y="35" width="255" height="90" rx="18" fill="#0e1a29" stroke="#2f4a63"/>
+    <text x="1012" y="73" text-anchor="middle" font-size="21" font-weight="700">Telemetry store</text><text x="1012" y="100" text-anchor="middle" font-size="15" fill="#94a3b8">NDJSON sessions + indexes</text>
+    <rect x="885" y="145" width="255" height="90" rx="18" fill="#0e1a29" stroke="#2f4a63"/>
+    <text x="1012" y="183" text-anchor="middle" font-size="21" font-weight="700">Security analysis</text><text x="1012" y="210" text-anchor="middle" font-size="15" fill="#94a3b8">findings only — never blocking</text>
+    <rect x="45" y="310" width="330" height="125" rx="20" fill="#0e1a29" stroke="#274057"/>
+    <text x="210" y="355" text-anchor="middle" font-size="22" font-weight="700">Deterministic evaluator</text><text x="210" y="392" text-anchor="middle" font-size="16" fill="#94a3b8">tests · build · lint · types · time</text><text x="210" y="416" text-anchor="middle" font-size="16" fill="#94a3b8">commands · diffs · tokens · resources</text>
+    <rect x="455" y="310" width="300" height="125" rx="20" fill="#102334" stroke="#38bdf8"/>
+    <text x="605" y="355" text-anchor="middle" font-size="22" font-weight="700">Scoring engine</text><text x="605" y="392" text-anchor="middle" font-size="16" fill="#94a3b8">configurable local weights</text><text x="605" y="416" text-anchor="middle" font-size="16" fill="#94a3b8">no AI judge</text>
+    <rect x="825" y="310" width="315" height="125" rx="20" fill="#12291d" stroke="#a3e635"/>
+    <text x="982" y="355" text-anchor="middle" font-size="22" font-weight="700">Local reports</text><text x="982" y="392" text-anchor="middle" font-size="16" fill="#94a3b8">winner + exact reasons</text><text x="982" y="416" text-anchor="middle" font-size="16" fill="#94a3b8">history · compare · JSON export</text>
+    <path d="M295 135H365" stroke="url(#line)" stroke-width="4" marker-end="url(#arrow)"/>
+    <path d="M615 135H686" stroke="url(#line)" stroke-width="4" marker-end="url(#arrow)"/>
+    <path d="M794 100H885" stroke="#7dd3fc" stroke-width="3.5" marker-end="url(#arrow)"/>
+    <path d="M794 170H885" stroke="#7dd3fc" stroke-width="3.5" marker-end="url(#arrow)"/>
+    <path d="M740 189V270H210V310" stroke="url(#line)" stroke-width="4" fill="none" marker-end="url(#arrow)"/>
+    <path d="M375 372H455" stroke="url(#line)" stroke-width="4" marker-end="url(#arrow)"/>
+    <path d="M755 372H825" stroke="url(#line)" stroke-width="4" marker-end="url(#arrow)"/>
+    <text x="590" y="480" text-anchor="middle" font-size="19" fill="#7dd3fc">All processing and storage stay on your machine.</text>
+  </g>
+</svg>
