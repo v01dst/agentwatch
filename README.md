@@ -134,7 +134,8 @@ Findings are informational only. Evidence is redacted—for example `sk-a…[red
 
 | Command | Purpose |
 |---|---|
-| `agentwatch run -- <command>` | Launch and observe an arbitrary agent |
+| `agentwatch run -- <command>` | Launch and observe an agent with a live one-line status strip |
+| `agentwatch tui` | Open a full-screen read-only dashboard; press `1-4`, `r`, or `q` |
 | `agentwatch session <id>` | Print a stored event timeline |
 | `agentwatch inspect <id> --json` | Machine-readable inspection payload |
 | `agentwatch report <id>` | Human-readable session report |
@@ -152,6 +153,7 @@ Useful global flags:
 --json          machine-readable output where supported
 --adapter name  force codex, claude, opencode, or generic
 --model model   expose AGENTWATCH_MODEL to the child process
+--no-overlay    disable the live status strip during run
 ```
 
 ## Configuration
@@ -170,7 +172,7 @@ All data remains under `.agentwatch/` by default:
 
 ```text
 .agentwatch/
-├── index/schema.json        schema migration marker (version 1)
+├── index/schema.json        schema migration marker (version 2)
 ├── index/session-manifests.json  atomic session status catalog (schema v2)
 ├── index/sessions.json      atomic session catalog
 ├── index/benchmarks.json    atomic benchmark catalog
