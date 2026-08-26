@@ -27,6 +27,7 @@ export interface RunResult {
   events: AgentWatchEvent[];
   stdout: string;
   stderr: string;
+  status?: SessionStatus;
   tokenUsage?: { input?: number; output?: number };
 }
 
@@ -164,6 +165,7 @@ export class AgentRunner {
     return {
       id, exitCode: result.exitCode, signal: result.signal, durationMs,
       events, stdout: redactText(stdoutBuffer), stderr: redactText(stderrBuffer),
+      status,
       ...(Object.keys(usage).length > 0 ? { tokenUsage: usage } : {}),
     };
   }

@@ -2,7 +2,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
-import { AgentRunner } from "./observability/runner.js";
+import { AgentRunner, type RunResult } from "./observability/runner.js";
 import { LocalStore } from "./storage/store.js";
 import { analyzeEvents, scanProject } from "./analysis/security.js";
 import { scoreCandidates } from "./benchmark/engine.js";
@@ -10,6 +10,7 @@ import type { BenchmarkRunResult } from "./benchmark/types.js";
 import type { JsonValue } from "./types.js";
 import { comparisonReport } from "./report/render.js";
 import { buildLeaderboard, renderDashboard } from "./observability/dashboard.js";
+import { TerminalTui } from "./observability/tui.js";
 
 interface ParsedArgs {
   flags: Map<string, string | boolean>;
@@ -45,23 +46,68 @@ function parseArgs(input: string[]): ParsedArgs {
   return { flags, positional };
 }
 
-const HELP = `AgentWatch — local-first agent observability
+const HELP = `AgentWatch — watch what your coding agent actually does.
 
-Usage:
-  agentwatch run [--adapter name] [--model model] -- <agent-command> [args...]
-  agentwatch session <session-id> [--json]
-  agentwatch inspect <session-id> --json
-  agentwatch report <session-id>
+Everything is local. AgentWatch observes and reports only: it never approves, blocks,
+pauses, edits, or controls the agent. Stop an agent normally with Ctrl+C.
+
+USAGE
+  agentwatch run [options] -- <agent-command> [arguments...]
+      Run any CLI agent under observation.
+
+      Examples:
+        agentwatch run -- codex "fix the failing tests"
+        agentwatch run --model claude-sonnet-4 -- claude
+        agentwatch run --json -- node ./my-agent.js
+
+  agentwatch tui [--interval-ms 1000]
+      Open a full-screen local dashboard. Press 1-4 to switch tabs, r refresh, q quit.
+
+  agentwatch dashboard
+      Print one read-only dashboard snapshot.
+
+  agentwatch session <id> [--json]
+      Show the recorded event timeline for one session.
+
+  agentwatch report <id> [--json]
+      Summarize lifecycle, activity, resources, files, git, tokens, and findings.
+
+  agentwatch inspect <id>
+      Machine-readable session payload (same as report --json).
+
   agentwatch benchmark <task-dir> --agent name[:model]
-  agentwatch compare <result-a.json> <result-b.json>
-  agentwatch history
+      Run reproducible deterministic comparisons.
+
+      Example:
+        agentwatch benchmark ./examples/benchmark-tasks/calculate-cli --agent codex:gpt-5
+
+  agentwatch compare result-a.json result-b.json
+      Compare two saved benchmark results and explain exactly why one won.
+
+  agentwatch leaderboard [--task id] [--limit n] [--json]
+      Aggregate local historical benchmark results by agent/model.
+
+  agentwatch history [--json]
+      List recorded sessions.
+
   agentwatch export <file-or-session-id>
   agentwatch import <export-file>
-  agentwatch dashboard
-  agentwatch leaderboard [--task id] [--limit n]
+      Copy artifacts between local project data directories.
 
-AgentWatch observes only. It never approves, blocks, pauses, or edits an agent.
-All data remains in ./.agentwatch unless AGENTWATCH_DATA_DIR is configured.`;
+COMMON RUN OPTIONS
+  --adapter <name>              Prefer codex, claude, opencode, or generic.
+  --model <model>               Expose AGENTWATCH_MODEL to the child process.
+  --json                        Machine-readable output where supported.
+  --no-process-tree             Disable best-effort descendant-process snapshots.
+  --no-network                  Disable metadata-only network snapshots.
+  --resource-interval-ms <ms>   Sampling interval; 0 disables resource sampling.
+
+DATA
+  Stored locally in ./.agentwatch by default.
+  Override with AGENTWATCH_DATA_DIR=/path/to/local/directory.
+
+SECURITY NOTE
+  Findings are informational only. Potential secrets are redacted in output.`;
 
 async function main(argv: string[]): Promise<number> {
   const command = argv[0];
@@ -83,8 +129,39 @@ async function main(argv: string[]): Promise<number> {
       ...(Number(args.flags.get("resource-interval-ms")) > 0 ? { resourceIntervalMs: Number(args.flags.get("resource-interval-ms")) } : {}),
     };
     const childArgv = rest.slice(rest.indexOf("--") + 1).filter(Boolean);
-    const run = await (await AgentRunner.open({ cwd: process.cwd() })).run(childArgv, runnerOptions);
-    if (args.flags.has("json")) console.log(JSON.stringify(run, null, 2));
+    const overlayEnabled = !args.flags.has("no-overlay") && process.stdout.isTTY && !args.flags.has("json");
+    const overlay = overlayEnabled ? createOverlay() : null;
+    let completed: RunResult | undefined;
+    try {
+      completed = await (await AgentRunner.open({ cwd: process.cwd() })).run(childArgv, {
+        ...runnerOptions,
+        onEvent: async (event) => {
+          overlay?.update(event);
+        },
+      });
+    } finally {
+      overlay?.finish(completed?.status ?? "failed", completed?.exitCode ?? null, completed?.durationMs ?? 0);
+    }
+    if (completed && args.flags.has("json")) console.log(JSON.stringify({ ...completed, status: completed.status }, null, 2));
+    return 0;
+  }
+  if (command === "tui") {
+    const intervalMs = Number(parseArgs(rest).flags.get("interval-ms") ?? 1000);
+    const tui = await TerminalTui.launch(Number.isFinite(intervalMs) && intervalMs >= 250 ? intervalMs : 1000);
+    tui.start();
+    return new Promise<number>((resolve) => {
+      process.once("SIGINT", () => { tui.quit(); resolve(0); });
+      const wait = setInterval(() => {
+        if (!isTuiRunning(tui)) {
+          clearInterval(wait);
+          resolve(0);
+        }
+      }, 100);
+      wait.unref();
+    });
+  }
+  if (command === "dashboard") {
+    console.log(await renderDashboard(store));
     return 0;
   }
   if (command === "session" || command === "inspect" || command === "report") {
@@ -148,10 +225,6 @@ async function main(argv: string[]): Promise<number> {
     if (args.flags.has("json")) console.log(JSON.stringify(sessions, null, 2));
     else for (const session of sessions)
       console.log(`${session.status.padEnd(10)} ${session.id} ${redactCliText(session.command.join(" "))}`);
-    return 0;
-  }
-  if (command === "dashboard") {
-    console.log(await renderDashboard(store));
     return 0;
   }
   if (command === "leaderboard") {
@@ -225,6 +298,45 @@ function printRichReport(manifest: any, events: any[], findings: unknown[]): voi
 
 function redactCliText(value: string): string {
   return value.replace(/(?:api[_-]?key|token|password|secret)["':=\s]+[^\s'"]+/gi, "$&…[redacted]");
+}
+
+interface LiveOverlay {
+  update(event: { kind: string; data: Record<string, unknown> }): void;
+  finish(status: "success" | "failed" | "signaled" | string | undefined, exitCode: number | null, durationMs: number): void;
+}
+
+function createOverlay(): LiveOverlay {
+  const startedAt = Date.now();
+  let events = 0;
+  let files = 0;
+  let findings = 0;
+  let lastActivity = "";
+  let lastResourceMb = 0;
+  const render = () => {
+    const elapsed = ((Date.now() - startedAt) / 1000).toFixed(1);
+    const activity = lastActivity.slice(0, Math.max(12, (process.stdout.columns ?? 100) - 58));
+    process.stdout.write(`\u001b[s\r\u001b[K\u001b[90mAgentWatch · ${elapsed}s · ${events} events · ${files} files · ${findings} findings${lastResourceMb ? ` · ${lastResourceMb.toFixed(1)} MB` : ""}${activity ? ` · ${activity}` : ""}\u001b[0m\u001b[u`);
+  };
+  render();
+  return {
+    update(event) {
+      events++;
+      if (event.kind === "file.change") files++;
+      if (event.kind === "security.finding") findings++;
+      if (event.kind === "resource.usage") lastResourceMb = Number(event.data.rssBytes ?? 0) / 1024 / 1024;
+      if (event.kind === "output.stdout") lastActivity = `stdout ${String(event.data.line ?? "").slice(0, 80)}`;
+      else if (event.kind === "output.stderr") lastActivity = `stderr ${String(event.data.line ?? "").slice(0, 80)}`;
+      else if (event.kind === "process.tree") lastActivity = `process ${String(event.data.pid ?? "")}`;
+      render();
+    },
+    finish(status, exitCode, durationMs) {
+      process.stdout.write(`\n\u001b[90mAgentWatch finished · ${status ?? "unknown"} · exit ${exitCode ?? "?"} · ${(durationMs / 1000).toFixed(1)}s\u001b[0m\n`);
+    },
+  };
+}
+
+function isTuiRunning(tui: TerminalTui): boolean {
+  return tui.isRunning();
 }
 
 main(process.argv.slice(2)).then((code) => {
