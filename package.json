@@ -23,7 +23,7 @@
     "build": "tsc -p tsconfig.json",
     "dev": "node --watch src/cli.ts",
     "pretest": "npm run build",
-    "test": "node --experimental-test-coverage --test dist/tests/*.test.js",
+    "test": "node --test dist/tests/*.test.js",
     "typecheck": "tsc --noEmit",
     "clean": "node -e \"fs.rmSync('dist',{recursive:true,force:true})\""
   },
